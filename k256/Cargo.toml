@@ -12,7 +12,6 @@ categories = ["cryptography", "cryptography::cryptocurrencies", "no-std"]
 keywords = ["bitcoin", "crypto", "ecc", "ethereum", "secp256k1"]
 
 [dependencies]
-cfg-if = "0.1"
 ecdsa = { version = "= 0.7.0-pre", optional = true, default-features = false }
 elliptic-curve = { version = "= 0.5.0-pre",  default-features = false, features = ["weierstrass"] }
 sha2 = { version = "0.9", optional = true }
@@ -26,13 +25,16 @@ num-traits = "0.2"
 
 [features]
 default = ["arithmetic", "std"]
-arithmetic = []
+u64_backend = []
+u32_backend = []
 field-montgomery = []
 force-32-bit = []
 rand = ["elliptic-curve/rand_core"]
 sha256 = ["ecdsa/digest", "ecdsa/hazmat", "sha2"]
 test-vectors = []
 std = ["elliptic-curve/std"]
+
+arithmetic = ["u64_backend"]
 
 [package.metadata.docs.rs]
 all-features = true

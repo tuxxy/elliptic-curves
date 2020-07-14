@@ -1,8 +1,9 @@
 //! A pure-Rust implementation of group operations on secp256k1.
 
-mod field;
-pub(crate) mod scalar;
+pub(crate) mod field;
+//pub(crate) mod scalar;
 
+mod backend;
 mod util;
 
 use core::convert::TryInto;
@@ -14,7 +15,7 @@ use elliptic_curve::{
 
 use crate::{CompressedPoint, PublicKey, ScalarBytes, Secp256k1, UncompressedPoint};
 use field::FieldElement;
-use scalar::Scalar;
+//use scalar::Scalar;
 
 #[cfg(feature = "rand")]
 use crate::SecretKey;
@@ -170,18 +171,18 @@ impl From<AffinePoint> for UncompressedPoint {
     }
 }
 
-impl FixedBaseScalarMul for Secp256k1 {
-    /// Elliptic curve point type
-    type Point = AffinePoint;
-
-    /// Multiply the given scalar by the generator point for this elliptic
-    /// curve.
-    fn mul_base(scalar_bytes: &ScalarBytes) -> CtOption<Self::Point> {
-        let bytes: [u8; 32] = (*scalar_bytes).into();
-        Scalar::from_bytes(&bytes)
-            .and_then(|scalar| (&ProjectivePoint::generator() * &scalar).to_affine())
-    }
-}
+//impl FixedBaseScalarMul for Secp256k1 {
+//    /// Elliptic curve point type
+//    type Point = AffinePoint;
+//
+//    /// Multiply the given scalar by the generator point for this elliptic
+//    /// curve.
+//    fn mul_base(scalar_bytes: &ScalarBytes) -> CtOption<Self::Point> {
+//        let bytes: [u8; 32] = (*scalar_bytes).into();
+//        Scalar::from_bytes(&bytes)
+//            .and_then(|scalar| (&ProjectivePoint::generator() * &scalar).to_affine())
+//    }
+//}
 
 impl Neg for AffinePoint {
     type Output = AffinePoint;
@@ -390,40 +391,40 @@ impl ProjectivePoint {
         self.add_mixed(&other.neg())
     }
 
-    /// Returns `[k] self`.
-    fn mul(&self, k: &Scalar) -> ProjectivePoint {
-        const LOG_MUL_WINDOW_SIZE: usize = 4;
-        const MUL_STEPS: usize = (256 - 1) / LOG_MUL_WINDOW_SIZE + 1;
-        const MUL_PRECOMP_SIZE: usize = 1 << LOG_MUL_WINDOW_SIZE;
+    ///// Returns `[k] self`.
+    //fn mul(&self, k: &Scalar) -> ProjectivePoint {
+    //    const LOG_MUL_WINDOW_SIZE: usize = 4;
+    //    const MUL_STEPS: usize = (256 - 1) / LOG_MUL_WINDOW_SIZE + 1;
+    //    const MUL_PRECOMP_SIZE: usize = 1 << LOG_MUL_WINDOW_SIZE;
 
-        // corresponds to di = [1, 3, 5, ..., 2^(w-1)-1, -2^(w-1)-1, ..., -3, -1]
-        let mut precomp = [ProjectivePoint::identity(); MUL_PRECOMP_SIZE];
-        let mask = (1u32 << LOG_MUL_WINDOW_SIZE) - 1u32;
+    //    // corresponds to di = [1, 3, 5, ..., 2^(w-1)-1, -2^(w-1)-1, ..., -3, -1]
+    //    let mut precomp = [ProjectivePoint::identity(); MUL_PRECOMP_SIZE];
+    //    let mask = (1u32 << LOG_MUL_WINDOW_SIZE) - 1u32;
 
-        precomp[0] = ProjectivePoint::identity();
-        precomp[1] = *self;
-        for i in 2..MUL_PRECOMP_SIZE {
-            precomp[i] = precomp[i - 1] + self;
-        }
+    //    precomp[0] = ProjectivePoint::identity();
+    //    precomp[1] = *self;
+    //    for i in 2..MUL_PRECOMP_SIZE {
+    //        precomp[i] = precomp[i - 1] + self;
+    //    }
 
-        let mut acc = ProjectivePoint::identity();
-        for idx in (0..MUL_STEPS).rev() {
-            for _j in 0..LOG_MUL_WINDOW_SIZE {
-                acc = acc.double();
-            }
-            let di = ((k >> (idx * LOG_MUL_WINDOW_SIZE)).truncate_to_u32() & mask) as usize;
+    //    let mut acc = ProjectivePoint::identity();
+    //    for idx in (0..MUL_STEPS).rev() {
+    //        for _j in 0..LOG_MUL_WINDOW_SIZE {
+    //            acc = acc.double();
+    //        }
+    //        let di = ((k >> (idx * LOG_MUL_WINDOW_SIZE)).truncate_to_u32() & mask) as usize;
 
-            // Constant-time array indexing
-            let mut elem = ProjectivePoint::identity();
-            for i in 0..MUL_PRECOMP_SIZE {
-                elem = ProjectivePoint::conditional_select(&elem, &(precomp[di]), i.ct_eq(&di));
-            }
+    //        // Constant-time array indexing
+    //        let mut elem = ProjectivePoint::identity();
+    //        for i in 0..MUL_PRECOMP_SIZE {
+    //            elem = ProjectivePoint::conditional_select(&elem, &(precomp[di]), i.ct_eq(&di));
+    //        }
 
-            acc += precomp[di as usize];
-        }
+    //        acc += precomp[di as usize];
+    //    }
 
-        acc
-    }
+    //    acc
+    //}
 }
 
 impl Add<&ProjectivePoint> for &ProjectivePoint {
@@ -526,33 +527,33 @@ impl SubAssign<AffinePoint> for ProjectivePoint {
     }
 }
 
-impl Mul<&Scalar> for &ProjectivePoint {
-    type Output = ProjectivePoint;
-
-    fn mul(self, other: &Scalar) -> ProjectivePoint {
-        ProjectivePoint::mul(self, other)
-    }
-}
-
-impl Mul<&Scalar> for ProjectivePoint {
-    type Output = ProjectivePoint;
-
-    fn mul(self, other: &Scalar) -> ProjectivePoint {
-        ProjectivePoint::mul(&self, other)
-    }
-}
-
-impl MulAssign<Scalar> for ProjectivePoint {
-    fn mul_assign(&mut self, rhs: Scalar) {
-        *self = ProjectivePoint::mul(self, &rhs);
-    }
-}
-
-impl MulAssign<&Scalar> for ProjectivePoint {
-    fn mul_assign(&mut self, rhs: &Scalar) {
-        *self = ProjectivePoint::mul(self, rhs);
-    }
-}
+//impl Mul<&Scalar> for &ProjectivePoint {
+//    type Output = ProjectivePoint;
+//
+//    fn mul(self, other: &Scalar) -> ProjectivePoint {
+//        ProjectivePoint::mul(self, other)
+//    }
+//}
+//
+//impl Mul<&Scalar> for ProjectivePoint {
+//    type Output = ProjectivePoint;
+//
+//    fn mul(self, other: &Scalar) -> ProjectivePoint {
+//        ProjectivePoint::mul(&self, other)
+//    }
+//}
+//
+//impl MulAssign<Scalar> for ProjectivePoint {
+//    fn mul_assign(&mut self, rhs: Scalar) {
+//        *self = ProjectivePoint::mul(self, &rhs);
+//    }
+//}
+//
+//impl MulAssign<&Scalar> for ProjectivePoint {
+//    fn mul_assign(&mut self, rhs: &Scalar) {
+//        *self = ProjectivePoint::mul(self, rhs);
+//    }
+//}
 
 impl Neg for ProjectivePoint {
     type Output = ProjectivePoint;

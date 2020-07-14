@@ -28,7 +28,8 @@ pub mod test_vectors;
 pub use elliptic_curve;
 
 #[cfg(feature = "arithmetic")]
-pub use arithmetic::{scalar::Scalar, AffinePoint, ProjectivePoint};
+// Removed `scalar`
+pub use arithmetic::{AffinePoint, ProjectivePoint};
 
 use elliptic_curve::{generic_array::typenum::U32, weierstrass::Curve};
 

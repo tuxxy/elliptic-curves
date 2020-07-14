@@ -1,33 +1,31 @@
 //! Field arithmetic modulo p = 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1
 
-use cfg_if::cfg_if;
-
-cfg_if! {
-    if #[cfg(feature = "field-montgomery")] {
-        mod field_montgomery;
-    } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-        mod field_10x26;
-    } else if #[cfg(target_pointer_width = "64")] {
-        mod field_5x52;
-    }
-}
-
-cfg_if! {
-    if #[cfg(all(debug_assertions, not(feature = "field-montgomery")))] {
-        mod field_impl;
-        use field_impl::FieldElementImpl;
-    } else {
-        cfg_if! {
-            if #[cfg(feature = "field-montgomery")] {
-                use field_montgomery::FieldElementMontgomery as FieldElementImpl;
-            } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-                use field_10x26::FieldElement10x26 as FieldElementImpl;
-            } else if #[cfg(target_pointer_width = "64")] {
-                use field_5x52::FieldElement5x52 as FieldElementImpl;
-            }
-        }
-    }
-}
+//cfg_if! {
+//    if #[cfg(feature = "field-montgomery")] {
+//        mod field_montgomery;
+//    } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
+//        mod field_10x26;
+//    } else if #[cfg(target_pointer_width = "64")] {
+//        mod field_5x52;
+//    }
+//}
+//
+//cfg_if! {
+//    if #[cfg(all(debug_assertions, not(feature = "field-montgomery")))] {
+//        mod field_impl;
+//        use field_impl::FieldElement;
+//    } else {
+//        cfg_if! {
+//            if #[cfg(feature = "field-montgomery")] {
+//                use field_montgomery::FieldElementMontgomery as FieldElement;
+//            } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
+//                use field_10x26::FieldElement10x26 as FieldElement;
+//            } else if #[cfg(target_pointer_width = "64")] {
+//                use field_5x52::FieldElement5x52 as FieldElement;
+//            }
+//        }
+//    }
+//}
 
 use core::ops::{Add, AddAssign, Mul, MulAssign};
 use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
@@ -35,19 +33,37 @@ use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, Ct
 #[cfg(test)]
 use num_bigint::{BigUint, ToBigUint};
 
-/// An element in the finite field used for curve coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct FieldElement(FieldElementImpl);
+#[cfg(feature = "u64_backend")]
+pub use crate::arithmetic::backend::u64::field::FieldElement5x52;
+
+#[cfg(feature = "u32_backend")]
+pub use crate::arithmetic::backend::u32::field::FieldElement10x26;
+
+/// The `FieldElement` type is an alias for 64-bit arithmetic that leverages
+/// "lazy arithmetic" with five u64 ints to hold 52 bits each.
+///
+/// A `FieldElement` represents an element of the field
+/// 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1
+#[cfg(feature = "u64_backend")]
+pub type FieldElement = FieldElement5x52;
+
+/// The `FieldElement` type is an alias for 32-bit arithmetic that leverages
+/// "lazy arithmetic" with 10 u32 ints to hold 26 bits each.
+///
+/// A `FieldElement` represents an element of the field
+/// 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1
+#[cfg(feature = "u32_backend")]
+pub type FieldElement = FieldElement10x26;
 
 impl FieldElement {
     /// Returns the zero element.
     pub const fn zero() -> Self {
-        Self(FieldElementImpl::zero())
+        Self(FieldElement::zero())
     }
 
     /// Returns the multiplicative identity.
     pub const fn one() -> Self {
-        Self(FieldElementImpl::one())
+        Self(FieldElement::one())
     }
 
     /// Determine if this `FieldElement10x26` is zero.
@@ -71,7 +87,7 @@ impl FieldElement {
     /// Attempts to parse the given byte array as an SEC-1-encoded field element.
     /// Does not check the result for being in the correct range.
     pub const fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
-        Self(FieldElementImpl::from_bytes_unchecked(bytes))
+        Self(FieldElement::from_bytes_unchecked(bytes))
     }
 
     /// Attempts to parse the given byte array as an SEC-1-encoded field element.
@@ -79,7 +95,7 @@ impl FieldElement {
     /// Returns None if the byte array does not contain a big-endian integer in the range
     /// [0, p).
     pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
-        let value = FieldElementImpl::from_bytes(bytes);
+        let value = FieldElement::from_bytes(bytes);
         CtOption::map(value, Self)
     }
 
@@ -238,7 +254,7 @@ impl Default for FieldElement {
 
 impl ConditionallySelectable for FieldElement {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
-        Self(FieldElementImpl::conditional_select(&(a.0), &(b.0), choice))
+        Self(FieldElement::conditional_select(&(a.0), &(b.0), choice))
     }
 }
 

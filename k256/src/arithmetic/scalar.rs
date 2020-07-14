@@ -1,20 +1,18 @@
 //! Scalar field arithmetic.
 
-use cfg_if::cfg_if;
-
-cfg_if! {
-    if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-        mod scalar_8x32;
-        use scalar_8x32::Scalar8x32 as ScalarImpl;
-        #[cfg(feature = "rand")]
-        use scalar_8x32::WideScalar16x32 as WideScalarImpl;
-    } else if #[cfg(target_pointer_width = "64")] {
-        mod scalar_4x64;
-        use scalar_4x64::Scalar4x64 as ScalarImpl;
-        #[cfg(feature = "rand")]
-        use scalar_4x64::WideScalar8x64 as WideScalarImpl;
-    }
-}
+//cfg_if! {
+//    if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
+//        mod scalar_8x32;
+//        use scalar_8x32::Scalar8x32 as ScalarImpl;
+//        #[cfg(feature = "rand")]
+//        use scalar_8x32::WideScalar16x32 as WideScalarImpl;
+//    } else if #[cfg(target_pointer_width = "64")] {
+//        mod scalar_4x64;
+//        use scalar_4x64::Scalar4x64 as ScalarImpl;
+//        #[cfg(feature = "rand")]
+//        use scalar_4x64::WideScalar8x64 as WideScalarImpl;
+//    }
+//}
 
 use core::ops::{Add, AddAssign, Mul, MulAssign, Shr, Sub, SubAssign};
 
