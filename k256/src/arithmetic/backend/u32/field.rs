@@ -1,6 +1,9 @@
 //! Field element modulo the curve internal modulus using 32-bit limbs.
 //! Ported from https://github.com/bitcoin-core/secp256k1
 
+use core::ops::{Add, AddAssign};
+use core::ops::{Mul, MulAssign};
+
 use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 /// Scalars modulo SECP256k1 modulus (2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1).
@@ -11,339 +14,46 @@ use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, Ct
 #[derive(Clone, Copy, Debug)]
 pub struct FieldElement10x26(pub(crate) [u32; 10]);
 
-impl FieldElement10x26 {
-    /// Returns the zero element.
-    pub const fn zero() -> Self {
-        Self([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+impl<'b> AddAssign<&'b FieldElement10x26> for FieldElement10x26 {
+    fn add_assign(&mut self, rhs: &'b FieldElement10x26) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+        self.0[2] += rhs.0[2];
+        self.0[3] += rhs.0[3];
+        self.0[4] += rhs.0[4];
+        self.0[5] += rhs.0[5];
+        self.0[6] += rhs.0[6];
+        self.0[7] += rhs.0[7];
+        self.0[8] += rhs.0[8];
+        self.0[9] += rhs.0[9];
     }
+}
 
-    /// Returns the multiplicative identity.
-    pub const fn one() -> Self {
-        Self([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+impl<'a, 'b> Add<&'b FieldElement10x26> for &'a FieldElement10x26 {
+    type Output = FieldElement10x26;
+    fn add(self, rhs: &'b FieldElement10x26) -> FieldElement10x26 {
+        let mut output = *self;
+        output += rhs;
+        output
     }
+}
 
-    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
-    /// Does not check the result for being in the correct range.
-    pub const fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
-        let w0 = (bytes[31] as u32)
-            | ((bytes[30] as u32) << 8)
-            | ((bytes[29] as u32) << 16)
-            | (((bytes[28] & 0x3) as u32) << 24);
-        let w1 = (((bytes[28] >> 2) as u32) & 0x3f)
-            | ((bytes[27] as u32) << 6)
-            | ((bytes[26] as u32) << 14)
-            | (((bytes[25] & 0xf) as u32) << 22);
-        let w2 = (((bytes[25] >> 4) as u32) & 0xf)
-            | ((bytes[24] as u32) << 4)
-            | ((bytes[23] as u32) << 12)
-            | (((bytes[22] & 0x3f) as u32) << 20);
-        let w3 = (((bytes[22] >> 6) as u32) & 0x3)
-            | ((bytes[21] as u32) << 2)
-            | ((bytes[20] as u32) << 10)
-            | ((bytes[19] as u32) << 18);
-        let w4 = (bytes[18] as u32)
-            | ((bytes[17] as u32) << 8)
-            | ((bytes[16] as u32) << 16)
-            | (((bytes[15] & 0x3) as u32) << 24);
-        let w5 = (((bytes[15] >> 2) as u32) & 0x3f)
-            | ((bytes[14] as u32) << 6)
-            | ((bytes[13] as u32) << 14)
-            | (((bytes[12] & 0xf) as u32) << 22);
-        let w6 = (((bytes[12] >> 4) as u32) & 0xf)
-            | ((bytes[11] as u32) << 4)
-            | ((bytes[10] as u32) << 12)
-            | (((bytes[9] & 0x3f) as u32) << 20);
-        let w7 = (((bytes[9] >> 6) as u32) & 0x3)
-            | ((bytes[8] as u32) << 2)
-            | ((bytes[7] as u32) << 10)
-            | ((bytes[6] as u32) << 18);
-        let w8 = (bytes[5] as u32)
-            | ((bytes[4] as u32) << 8)
-            | ((bytes[3] as u32) << 16)
-            | (((bytes[2] & 0x3) as u32) << 24);
-        let w9 = (((bytes[2] >> 2) as u32) & 0x3f)
-            | ((bytes[1] as u32) << 6)
-            | ((bytes[0] as u32) << 14);
-
-        Self([w0, w1, w2, w3, w4, w5, w6, w7, w8, w9])
+/// Returns self *= rhs mod p
+/// Brings the magnitude to 1 (but doesn't normalize the result).
+/// The magnitudes of arguments should be <= 8.
+impl<'b> MulAssign<&'b FieldElement10x26> for FieldElement10x26 {
+    fn mul_assign(&mut self, rhs: &'b FieldElement10x26) {
+        let result = (self as &FieldElement10x26) * rhs;
+        self.0 = result.0
     }
+}
 
-    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
-    ///
-    /// Returns None if the byte array does not contain a big-endian integer in the range
-    /// [0, p).
-    pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
-        let res = Self::from_bytes_unchecked(bytes);
-        let overflow = res.get_overflow();
-
-        CtOption::new(res, !overflow)
-    }
-
-    /// Returns the SEC-1 encoding of this field element.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        let mut r = [0u8; 32];
-        r[0] = (self.0[9] >> 14) as u8;
-        r[1] = (self.0[9] >> 6) as u8;
-        r[2] = ((self.0[9] as u8 & 0x3Fu8) << 2) | ((self.0[8] >> 24) as u8 & 0x3);
-        r[3] = (self.0[8] >> 16) as u8;
-        r[4] = (self.0[8] >> 8) as u8;
-        r[5] = self.0[8] as u8;
-        r[6] = (self.0[7] >> 18) as u8;
-        r[7] = (self.0[7] >> 10) as u8;
-        r[8] = (self.0[7] >> 2) as u8;
-        r[9] = ((self.0[7] as u8 & 0x3u8) << 6) | ((self.0[6] >> 20) as u8 & 0x3fu8);
-        r[10] = (self.0[6] >> 12) as u8;
-        r[11] = (self.0[6] >> 4) as u8;
-        r[12] = ((self.0[6] as u8 & 0xfu8) << 4) | ((self.0[5] >> 22) as u8 & 0xfu8);
-        r[13] = (self.0[5] >> 14) as u8;
-        r[14] = (self.0[5] >> 6) as u8;
-        r[15] = ((self.0[5] as u8 & 0x3fu8) << 2) | ((self.0[4] >> 24) as u8 & 0x3u8);
-        r[16] = (self.0[4] >> 16) as u8;
-        r[17] = (self.0[4] >> 8) as u8;
-        r[18] = self.0[4] as u8;
-        r[19] = (self.0[3] >> 18) as u8;
-        r[20] = (self.0[3] >> 10) as u8;
-        r[21] = (self.0[3] >> 2) as u8;
-        r[22] = ((self.0[3] as u8 & 0x3u8) << 6) | ((self.0[2] >> 20) as u8 & 0x3fu8);
-        r[23] = (self.0[2] >> 12) as u8;
-        r[24] = (self.0[2] >> 4) as u8;
-        r[25] = ((self.0[2] as u8 & 0xfu8) << 4) | ((self.0[1] >> 22) as u8 & 0xfu8);
-        r[26] = (self.0[1] >> 14) as u8;
-        r[27] = (self.0[1] >> 6) as u8;
-        r[28] = ((self.0[1] as u8 & 0x3fu8) << 2) | ((self.0[0] >> 24) as u8 & 0x3u8);
-        r[29] = (self.0[0] >> 16) as u8;
-        r[30] = (self.0[0] >> 8) as u8;
-        r[31] = self.0[0] as u8;
-        r
-    }
-
-    /// Adds `x * (2^256 - modulus)`.
-    fn add_modulus_correction(&self, x: u32) -> Self {
-        // add (2^256 - modulus) * x to the first limb
-        let t0 = self.0[0] + x * 0x3D1u32;
-
-        // Propagate excess bits up the limbs
-        let t1 = self.0[1] + (x << 6); // add `x` times the high bit of correction (2^32)
-        let t1 = t1 + (t0 >> 26);
-        let t0 = t0 & 0x3FFFFFFu32;
-
-        let t2 = self.0[2] + (t1 >> 26);
-        let t1 = t1 & 0x3FFFFFFu32;
-
-        let t3 = self.0[3] + (t2 >> 26);
-        let t2 = t2 & 0x3FFFFFFu32;
-
-        let t4 = self.0[4] + (t3 >> 26);
-        let t3 = t3 & 0x3FFFFFFu32;
-
-        let t5 = self.0[5] + (t4 >> 26);
-        let t4 = t4 & 0x3FFFFFFu32;
-
-        let t6 = self.0[6] + (t5 >> 26);
-        let t5 = t5 & 0x3FFFFFFu32;
-
-        let t7 = self.0[7] + (t6 >> 26);
-        let t6 = t6 & 0x3FFFFFFu32;
-
-        let t8 = self.0[8] + (t7 >> 26);
-        let t7 = t7 & 0x3FFFFFFu32;
-
-        let t9 = self.0[9] + (t8 >> 26);
-        let t8 = t8 & 0x3FFFFFFu32;
-
-        Self([t0, t1, t2, t3, t4, t5, t6, t7, t8, t9])
-    }
-
-    /// Subtracts the overflow in the last limb and return it with the new field element.
-    /// Equivalent to subtracting a multiple of 2^256.
-    fn subtract_modulus_approximation(&self) -> (Self, u32) {
-        let x = self.0[9] >> 22;
-        let t9 = self.0[9] & 0x03FFFFFu32; // equivalent to self -= 2^256 * x
-        (
-            Self([
-                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
-                self.0[7], self.0[8], t9,
-            ]),
-            x,
-        )
-    }
-
-    /// Checks if the field element is greater or equal to the modulus.
-    fn get_overflow(&self) -> Choice {
-        let m = self.0[2] & self.0[3] & self.0[4] & self.0[5] & self.0[6] & self.0[7] & self.0[8];
-        let x = (self.0[9] == 0x3FFFFFu32)
-            & (m == 0x3FFFFFFu32)
-            & ((self.0[1] + 0x40u32 + ((self.0[0] + 0x3D1u32) >> 26)) > 0x3FFFFFFu32);
-        Choice::from(x as u8)
-    }
-
-    /// Brings the field element's magnitude to 1, but does not necessarily normalize it.
-    pub fn normalize_weak(&self) -> Self {
-        // Reduce t4 at the start so there will be at most a single carry from the first pass
-        let (t, x) = self.subtract_modulus_approximation();
-
-        // The first pass ensures the magnitude is 1, ...
-        let res = t.add_modulus_correction(x);
-
-        // ... except for a possible carry at bit 48 of t4 (i.e. bit 256 of the field element)
-        debug_assert!(res.0[9] >> 22 == 0);
-
-        res
-    }
-
-    /// Fully normalizes the field element.
-    /// That is, first nine limbs are at most 26 bit large, the last limb is at most 22 bit large,
-    /// and the value is less than the modulus.
-    pub fn normalize(&self) -> Self {
-        let res = self.normalize_weak();
-
-        // At most a single final reduction is needed;
-        // check if the value is >= the field characteristic
-        let overflow = res.get_overflow();
-
-        // Apply the final reduction (for constant-time behaviour, we do it always)
-        let res_corrected = res.add_modulus_correction(1u32);
-        // Mask off the possible multiple of 2^256 from the final reduction
-        let (res_corrected, x) = res_corrected.subtract_modulus_approximation();
-
-        // If the last limb didn't carry to bit 23 already,
-        // then it should have after any final reduction
-        debug_assert!(x == (overflow.unwrap_u8() as u32));
-
-        Self::conditional_select(&res, &res_corrected, overflow)
-    }
-
-    /// Checks if the field element becomes zero if normalized.
-    pub fn normalizes_to_zero(&self) -> Choice {
-        let res = self.normalize_weak();
-
-        let t0 = res.0[0];
-        let t1 = res.0[1];
-        let t2 = res.0[2];
-        let t3 = res.0[3];
-        let t4 = res.0[4];
-        let t5 = res.0[5];
-        let t6 = res.0[6];
-        let t7 = res.0[7];
-        let t8 = res.0[8];
-        let t9 = res.0[9];
-
-        // z0 tracks a possible raw value of 0, z1 tracks a possible raw value of the modulus
-        let z0 = t0 | t1 | t2 | t3 | t4 | t5 | t6 | t7 | t8 | t9;
-        let z1 = (t0 ^ 0x3D0u32)
-            & (t1 ^ 0x40u32)
-            & t2
-            & t3
-            & t4
-            & t5
-            & t6
-            & t7
-            & t8
-            & (t9 ^ 0x3C00000u32);
-
-        Choice::from(((z0 == 0) | (z1 == 0x3FFFFFFu32)) as u8)
-    }
-
-    /// Determine if this `FieldElement10x26` is zero.
-    ///
-    /// # Returns
-    ///
-    /// If zero, return `Choice(1)`.  Otherwise, return `Choice(0)`.
-    pub fn is_zero(&self) -> Choice {
-        Choice::from(
-            ((self.0[0]
-                | self.0[1]
-                | self.0[2]
-                | self.0[3]
-                | self.0[4]
-                | self.0[5]
-                | self.0[6]
-                | self.0[7]
-                | self.0[8]
-                | self.0[9])
-                == 0) as u8,
-        )
-    }
-
-    /// Determine if this `FieldElement10x26` is odd in the SEC-1 sense: `self mod 2 == 1`.
-    ///
-    /// # Returns
-    ///
-    /// If odd, return `Choice(1)`.  Otherwise, return `Choice(0)`.
-    pub fn is_odd(&self) -> Choice {
-        (self.0[0] as u8 & 1).into()
-    }
-
-    // The maximum number `m` for which `0x3FFFFFF * 2 * (m + 1) < 2^32`
-    #[cfg(debug_assertions)]
-    pub const fn max_magnitude() -> u32 {
-        31u32
-    }
-
-    /// Returns -self, treating it as a value of given magnitude.
-    /// The provided magnitude must be equal or greater than the actual magnitude of `self`.
-    pub const fn negate(&self, magnitude: u32) -> Self {
-        let m: u32 = magnitude + 1;
-        let r0 = 0x3FFFC2Fu32 * 2 * m - self.0[0];
-        let r1 = 0x3FFFFBFu32 * 2 * m - self.0[1];
-        let r2 = 0x3FFFFFFu32 * 2 * m - self.0[2];
-        let r3 = 0x3FFFFFFu32 * 2 * m - self.0[3];
-        let r4 = 0x3FFFFFFu32 * 2 * m - self.0[4];
-        let r5 = 0x3FFFFFFu32 * 2 * m - self.0[5];
-        let r6 = 0x3FFFFFFu32 * 2 * m - self.0[6];
-        let r7 = 0x3FFFFFFu32 * 2 * m - self.0[7];
-        let r8 = 0x3FFFFFFu32 * 2 * m - self.0[8];
-        let r9 = 0x03FFFFFu32 * 2 * m - self.0[9];
-        Self([r0, r1, r2, r3, r4, r5, r6, r7, r8, r9])
-    }
-
-    /// Returns self + rhs mod p.
-    /// Sums the magnitudes.
-    pub const fn add(&self, rhs: &Self) -> Self {
-        Self([
-            self.0[0] + rhs.0[0],
-            self.0[1] + rhs.0[1],
-            self.0[2] + rhs.0[2],
-            self.0[3] + rhs.0[3],
-            self.0[4] + rhs.0[4],
-            self.0[5] + rhs.0[5],
-            self.0[6] + rhs.0[6],
-            self.0[7] + rhs.0[7],
-            self.0[8] + rhs.0[8],
-            self.0[9] + rhs.0[9],
-        ])
-    }
-
-    /// Multiplies by a single-limb integer.
-    /// Multiplies the magnitude by the same value.
-    pub const fn mul_single(&self, rhs: u32) -> Self {
-        Self([
-            self.0[0] * rhs,
-            self.0[1] * rhs,
-            self.0[2] * rhs,
-            self.0[3] * rhs,
-            self.0[4] * rhs,
-            self.0[5] * rhs,
-            self.0[6] * rhs,
-            self.0[7] * rhs,
-            self.0[8] * rhs,
-            self.0[9] * rhs,
-        ])
-    }
-
-    #[inline(always)]
-    fn mul_inner(&self, rhs: &Self) -> Self {
-        /*
-        `square()` is just `mul()` with equal arguments. Rust compiler is smart enough
-        to do all the necessary optimizations for this case, but it needs to have this information
-        inside a function. If a function is just *called* with the same arguments,
-        this information cannot be used, so the function must be inlined while using the same arguments.
-
-        Now `mul()` is quite long and therefore expensive to inline. So we have an inner (inlined)
-        function, that is used inside `mul()` and `square()`, and when it is used with the same
-        arguments in `square()`, compiler is able to use that fact after inlining.
-        */
-
+/// Returns self * rhs mod p
+/// Brings the magnitude to 1 (but doesn't normalize the result).
+/// The magnitudes of arguments should be <= 8.
+impl<'a, 'b> Mul<&'b FieldElement10x26> for &'a FieldElement10x26 {
+    type Output = FieldElement10x26;
+    fn mul(self, rhs: &'b FieldElement10x26) -> FieldElement10x26 {
         let m = 0x3FFFFFFu64;
         let rr0 = 0x3D10u64;
         let rr1 = 0x400u64;
@@ -640,21 +350,331 @@ impl FieldElement10x26 {
         debug_assert!(r2 >> 27 == 0);
         // [r9 r8 r7 r6 r5 r4 r3 r2 r1 r0] = [p18 p17 p16 p15 p14 p13 p12 p11 p10 p9 p8 p7 p6 p5 p4 p3 p2 p1 p0]
 
+        FieldElement10x26([r0, r1, r2, r3, r4, r5, r6, r7, r8, r9])
+    }
+}
+
+impl FieldElement10x26 {
+    /// Returns the zero element.
+    pub const fn zero() -> Self {
+        Self([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// Returns the multiplicative identity.
+    pub const fn one() -> Self {
+        Self([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
+    /// Does not check the result for being in the correct range.
+    pub const fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
+        let w0 = (bytes[31] as u32)
+            | ((bytes[30] as u32) << 8)
+            | ((bytes[29] as u32) << 16)
+            | (((bytes[28] & 0x3) as u32) << 24);
+        let w1 = (((bytes[28] >> 2) as u32) & 0x3f)
+            | ((bytes[27] as u32) << 6)
+            | ((bytes[26] as u32) << 14)
+            | (((bytes[25] & 0xf) as u32) << 22);
+        let w2 = (((bytes[25] >> 4) as u32) & 0xf)
+            | ((bytes[24] as u32) << 4)
+            | ((bytes[23] as u32) << 12)
+            | (((bytes[22] & 0x3f) as u32) << 20);
+        let w3 = (((bytes[22] >> 6) as u32) & 0x3)
+            | ((bytes[21] as u32) << 2)
+            | ((bytes[20] as u32) << 10)
+            | ((bytes[19] as u32) << 18);
+        let w4 = (bytes[18] as u32)
+            | ((bytes[17] as u32) << 8)
+            | ((bytes[16] as u32) << 16)
+            | (((bytes[15] & 0x3) as u32) << 24);
+        let w5 = (((bytes[15] >> 2) as u32) & 0x3f)
+            | ((bytes[14] as u32) << 6)
+            | ((bytes[13] as u32) << 14)
+            | (((bytes[12] & 0xf) as u32) << 22);
+        let w6 = (((bytes[12] >> 4) as u32) & 0xf)
+            | ((bytes[11] as u32) << 4)
+            | ((bytes[10] as u32) << 12)
+            | (((bytes[9] & 0x3f) as u32) << 20);
+        let w7 = (((bytes[9] >> 6) as u32) & 0x3)
+            | ((bytes[8] as u32) << 2)
+            | ((bytes[7] as u32) << 10)
+            | ((bytes[6] as u32) << 18);
+        let w8 = (bytes[5] as u32)
+            | ((bytes[4] as u32) << 8)
+            | ((bytes[3] as u32) << 16)
+            | (((bytes[2] & 0x3) as u32) << 24);
+        let w9 = (((bytes[2] >> 2) as u32) & 0x3f)
+            | ((bytes[1] as u32) << 6)
+            | ((bytes[0] as u32) << 14);
+
+        Self([w0, w1, w2, w3, w4, w5, w6, w7, w8, w9])
+    }
+
+    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
+    ///
+    /// Returns None if the byte array does not contain a big-endian integer in the range
+    /// [0, p).
+    pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
+        let res = Self::from_bytes_unchecked(bytes);
+        let overflow = res.get_overflow();
+
+        CtOption::new(res, !overflow)
+    }
+
+    /// Returns the SEC-1 encoding of this field element.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        // Normalize before encoding
+        let norm_self = self.normalize();
+
+        let mut r = [0u8; 32];
+        r[0] = (norm_self.0[9] >> 14) as u8;
+        r[1] = (norm_self.0[9] >> 6) as u8;
+        r[2] = ((norm_self.0[9] as u8 & 0x3Fu8) << 2) | ((norm_self.0[8] >> 24) as u8 & 0x3);
+        r[3] = (norm_self.0[8] >> 16) as u8;
+        r[4] = (norm_self.0[8] >> 8) as u8;
+        r[5] = norm_self.0[8] as u8;
+        r[6] = (norm_self.0[7] >> 18) as u8;
+        r[7] = (norm_self.0[7] >> 10) as u8;
+        r[8] = (norm_self.0[7] >> 2) as u8;
+        r[9] = ((norm_self.0[7] as u8 & 0x3u8) << 6) | ((norm_self.0[6] >> 20) as u8 & 0x3fu8);
+        r[10] = (norm_self.0[6] >> 12) as u8;
+        r[11] = (norm_self.0[6] >> 4) as u8;
+        r[12] = ((norm_self.0[6] as u8 & 0xfu8) << 4) | ((norm_self.0[5] >> 22) as u8 & 0xfu8);
+        r[13] = (norm_self.0[5] >> 14) as u8;
+        r[14] = (norm_self.0[5] >> 6) as u8;
+        r[15] = ((norm_self.0[5] as u8 & 0x3fu8) << 2) | ((norm_self.0[4] >> 24) as u8 & 0x3u8);
+        r[16] = (norm_self.0[4] >> 16) as u8;
+        r[17] = (norm_self.0[4] >> 8) as u8;
+        r[18] = norm_self.0[4] as u8;
+        r[19] = (norm_self.0[3] >> 18) as u8;
+        r[20] = (norm_self.0[3] >> 10) as u8;
+        r[21] = (norm_self.0[3] >> 2) as u8;
+        r[22] = ((norm_self.0[3] as u8 & 0x3u8) << 6) | ((norm_self.0[2] >> 20) as u8 & 0x3fu8);
+        r[23] = (norm_self.0[2] >> 12) as u8;
+        r[24] = (norm_self.0[2] >> 4) as u8;
+        r[25] = ((norm_self.0[2] as u8 & 0xfu8) << 4) | ((norm_self.0[1] >> 22) as u8 & 0xfu8);
+        r[26] = (norm_self.0[1] >> 14) as u8;
+        r[27] = (norm_self.0[1] >> 6) as u8;
+        r[28] = ((norm_self.0[1] as u8 & 0x3fu8) << 2) | ((norm_self.0[0] >> 24) as u8 & 0x3u8);
+        r[29] = (norm_self.0[0] >> 16) as u8;
+        r[30] = (norm_self.0[0] >> 8) as u8;
+        r[31] = norm_self.0[0] as u8;
+        r
+    }
+
+    /// Adds `x * (2^256 - modulus)`.
+    fn add_modulus_correction(&self, x: u32) -> Self {
+        // add (2^256 - modulus) * x to the first limb
+        let t0 = self.0[0] + x * 0x3D1u32;
+
+        // Propagate excess bits up the limbs
+        let t1 = self.0[1] + (x << 6); // add `x` times the high bit of correction (2^32)
+        let t1 = t1 + (t0 >> 26);
+        let t0 = t0 & 0x3FFFFFFu32;
+
+        let t2 = self.0[2] + (t1 >> 26);
+        let t1 = t1 & 0x3FFFFFFu32;
+
+        let t3 = self.0[3] + (t2 >> 26);
+        let t2 = t2 & 0x3FFFFFFu32;
+
+        let t4 = self.0[4] + (t3 >> 26);
+        let t3 = t3 & 0x3FFFFFFu32;
+
+        let t5 = self.0[5] + (t4 >> 26);
+        let t4 = t4 & 0x3FFFFFFu32;
+
+        let t6 = self.0[6] + (t5 >> 26);
+        let t5 = t5 & 0x3FFFFFFu32;
+
+        let t7 = self.0[7] + (t6 >> 26);
+        let t6 = t6 & 0x3FFFFFFu32;
+
+        let t8 = self.0[8] + (t7 >> 26);
+        let t7 = t7 & 0x3FFFFFFu32;
+
+        let t9 = self.0[9] + (t8 >> 26);
+        let t8 = t8 & 0x3FFFFFFu32;
+
+        Self([t0, t1, t2, t3, t4, t5, t6, t7, t8, t9])
+    }
+
+    /// Subtracts the overflow in the last limb and return it with the new field element.
+    /// Equivalent to subtracting a multiple of 2^256.
+    fn subtract_modulus_approximation(&self) -> (Self, u32) {
+        let x = self.0[9] >> 22;
+        let t9 = self.0[9] & 0x03FFFFFu32; // equivalent to self -= 2^256 * x
+        (
+            Self([
+                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6],
+                self.0[7], self.0[8], t9,
+            ]),
+            x,
+        )
+    }
+
+    /// Checks if the field element is greater or equal to the modulus.
+    fn get_overflow(&self) -> Choice {
+        let m = self.0[2] & self.0[3] & self.0[4] & self.0[5] & self.0[6] & self.0[7] & self.0[8];
+        let x = (self.0[9] == 0x3FFFFFu32)
+            & (m == 0x3FFFFFFu32)
+            & ((self.0[1] + 0x40u32 + ((self.0[0] + 0x3D1u32) >> 26)) > 0x3FFFFFFu32);
+        Choice::from(x as u8)
+    }
+
+    /// Brings the field element's magnitude to 1, but does not necessarily normalize it.
+    pub fn normalize_weak(&self) -> Self {
+        // Reduce t4 at the start so there will be at most a single carry from the first pass
+        let (t, x) = self.subtract_modulus_approximation();
+
+        // The first pass ensures the magnitude is 1, ...
+        let res = t.add_modulus_correction(x);
+
+        // ... except for a possible carry at bit 48 of t4 (i.e. bit 256 of the field element)
+        debug_assert!(res.0[9] >> 22 == 0);
+
+        res
+    }
+
+    /// Fully normalizes the field element.
+    /// That is, first nine limbs are at most 26 bit large, the last limb is at most 22 bit large,
+    /// and the value is less than the modulus.
+    pub fn normalize(&self) -> Self {
+        let res = self.normalize_weak();
+
+        // At most a single final reduction is needed;
+        // check if the value is >= the field characteristic
+        let overflow = res.get_overflow();
+
+        // Apply the final reduction (for constant-time behaviour, we do it always)
+        let res_corrected = res.add_modulus_correction(1u32);
+        // Mask off the possible multiple of 2^256 from the final reduction
+        let (res_corrected, x) = res_corrected.subtract_modulus_approximation();
+
+        // If the last limb didn't carry to bit 23 already,
+        // then it should have after any final reduction
+        debug_assert!(x == (overflow.unwrap_u8() as u32));
+
+        Self::conditional_select(&res, &res_corrected, overflow)
+    }
+
+    /// Checks if the field element becomes zero if normalized.
+    pub fn normalizes_to_zero(&self) -> Choice {
+        let res = self.normalize_weak();
+
+        let t0 = res.0[0];
+        let t1 = res.0[1];
+        let t2 = res.0[2];
+        let t3 = res.0[3];
+        let t4 = res.0[4];
+        let t5 = res.0[5];
+        let t6 = res.0[6];
+        let t7 = res.0[7];
+        let t8 = res.0[8];
+        let t9 = res.0[9];
+
+        // z0 tracks a possible raw value of 0, z1 tracks a possible raw value of the modulus
+        let z0 = t0 | t1 | t2 | t3 | t4 | t5 | t6 | t7 | t8 | t9;
+        let z1 = (t0 ^ 0x3D0u32)
+            & (t1 ^ 0x40u32)
+            & t2
+            & t3
+            & t4
+            & t5
+            & t6
+            & t7
+            & t8
+            & (t9 ^ 0x3C00000u32);
+
+        Choice::from(((z0 == 0) | (z1 == 0x3FFFFFFu32)) as u8)
+    }
+
+    /// Determine if this `FieldElement10x26` is zero.
+    ///
+    /// # Returns
+    ///
+    /// If zero, return `Choice(1)`.  Otherwise, return `Choice(0)`.
+    pub fn is_zero(&self) -> Choice {
+        Choice::from(
+            ((self.0[0]
+                | self.0[1]
+                | self.0[2]
+                | self.0[3]
+                | self.0[4]
+                | self.0[5]
+                | self.0[6]
+                | self.0[7]
+                | self.0[8]
+                | self.0[9])
+                == 0) as u8,
+        )
+    }
+
+    /// Determine if this `FieldElement10x26` is odd in the SEC-1 sense: `self mod 2 == 1`.
+    ///
+    /// # Returns
+    ///
+    /// If odd, return `Choice(1)`.  Otherwise, return `Choice(0)`.
+    pub fn is_odd(&self) -> Choice {
+        (self.0[0] as u8 & 1).into()
+    }
+
+    // The maximum number `m` for which `0x3FFFFFF * 2 * (m + 1) < 2^32`
+    #[cfg(debug_assertions)]
+    pub const fn max_magnitude() -> u32 {
+        31u32
+    }
+
+    /// Returns -self, treating it as a value of given magnitude.
+    /// The provided magnitude must be equal or greater than the actual magnitude of `self`.
+    pub const fn negate(&self, magnitude: u32) -> Self {
+        let m: u32 = magnitude + 1;
+        let r0 = 0x3FFFC2Fu32 * 2 * m - self.0[0];
+        let r1 = 0x3FFFFBFu32 * 2 * m - self.0[1];
+        let r2 = 0x3FFFFFFu32 * 2 * m - self.0[2];
+        let r3 = 0x3FFFFFFu32 * 2 * m - self.0[3];
+        let r4 = 0x3FFFFFFu32 * 2 * m - self.0[4];
+        let r5 = 0x3FFFFFFu32 * 2 * m - self.0[5];
+        let r6 = 0x3FFFFFFu32 * 2 * m - self.0[6];
+        let r7 = 0x3FFFFFFu32 * 2 * m - self.0[7];
+        let r8 = 0x3FFFFFFu32 * 2 * m - self.0[8];
+        let r9 = 0x03FFFFFu32 * 2 * m - self.0[9];
         Self([r0, r1, r2, r3, r4, r5, r6, r7, r8, r9])
     }
 
-    /// Returns self * rhs mod p
-    /// Brings the magnitude to 1 (but doesn't normalize the result).
-    /// The magnitudes of arguments should be <= 8.
-    pub fn mul(&self, rhs: &Self) -> Self {
-        self.mul_inner(rhs)
+    /// Returns self + rhs mod p.
+    /// Sums the magnitudes.
+    pub const fn add(&self, rhs: &Self) -> Self {
+        Self([
+            self.0[0] + rhs.0[0],
+            self.0[1] + rhs.0[1],
+            self.0[2] + rhs.0[2],
+            self.0[3] + rhs.0[3],
+            self.0[4] + rhs.0[4],
+            self.0[5] + rhs.0[5],
+            self.0[6] + rhs.0[6],
+            self.0[7] + rhs.0[7],
+            self.0[8] + rhs.0[8],
+            self.0[9] + rhs.0[9],
+        ])
     }
 
-    /// Returns self * self
-    /// Brings the magnitude to 1 (but doesn't normalize the result).
-    /// The magnitudes of arguments should be <= 8.
-    pub fn square(&self) -> Self {
-        self.mul_inner(self)
+    /// Multiplies by a single-limb integer.
+    /// Multiplies the magnitude by the same value.
+    pub const fn mul_single(&self, rhs: u32) -> Self {
+        Self([
+            self.0[0] * rhs,
+            self.0[1] * rhs,
+            self.0[2] * rhs,
+            self.0[3] * rhs,
+            self.0[4] * rhs,
+            self.0[5] * rhs,
+            self.0[6] * rhs,
+            self.0[7] * rhs,
+            self.0[8] * rhs,
+            self.0[9] * rhs,
+        ])
     }
 }
 

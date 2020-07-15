@@ -1,34 +1,8 @@
 //! Field arithmetic modulo p = 2^256 - 2^32 - 2^9 - 2^8 - 2^7 - 2^6 - 2^4 - 1
 
-//cfg_if! {
-//    if #[cfg(feature = "field-montgomery")] {
-//        mod field_montgomery;
-//    } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-//        mod field_10x26;
-//    } else if #[cfg(target_pointer_width = "64")] {
-//        mod field_5x52;
-//    }
-//}
-//
-//cfg_if! {
-//    if #[cfg(all(debug_assertions, not(feature = "field-montgomery")))] {
-//        mod field_impl;
-//        use field_impl::FieldElement;
-//    } else {
-//        cfg_if! {
-//            if #[cfg(feature = "field-montgomery")] {
-//                use field_montgomery::FieldElementMontgomery as FieldElement;
-//            } else if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-//                use field_10x26::FieldElement10x26 as FieldElement;
-//            } else if #[cfg(target_pointer_width = "64")] {
-//                use field_5x52::FieldElement5x52 as FieldElement;
-//            }
-//        }
-//    }
-//}
+use core::cmp::{Eq, PartialEq};
 
-use core::ops::{Add, AddAssign, Mul, MulAssign};
-use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
+use elliptic_curve::subtle::{ConstantTimeEq, CtOption};
 
 #[cfg(test)]
 use num_bigint::{BigUint, ToBigUint};
@@ -55,102 +29,26 @@ pub type FieldElement = FieldElement5x52;
 #[cfg(feature = "u32_backend")]
 pub type FieldElement = FieldElement10x26;
 
+impl Eq for FieldElement {}
+
+impl PartialEq for FieldElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.ct_eq(&other).into()
+    }
+}
+
 impl FieldElement {
-    /// Returns the zero element.
-    pub const fn zero() -> Self {
-        Self(FieldElement::zero())
-    }
-
-    /// Returns the multiplicative identity.
-    pub const fn one() -> Self {
-        Self(FieldElement::one())
-    }
-
-    /// Determine if this `FieldElement10x26` is zero.
-    ///
-    /// # Returns
-    ///
-    /// If zero, return `Choice(1)`.  Otherwise, return `Choice(0)`.
-    pub fn is_zero(&self) -> Choice {
-        self.0.is_zero()
-    }
-
-    /// Determine if this `FieldElement10x26` is odd in the SEC-1 sense: `self mod 2 == 1`.
-    ///
-    /// # Returns
-    ///
-    /// If odd, return `Choice(1)`.  Otherwise, return `Choice(0)`.
-    pub fn is_odd(&self) -> Choice {
-        self.0.is_odd()
-    }
-
-    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
-    /// Does not check the result for being in the correct range.
-    pub const fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
-        Self(FieldElement::from_bytes_unchecked(bytes))
-    }
-
-    /// Attempts to parse the given byte array as an SEC-1-encoded field element.
-    ///
-    /// Returns None if the byte array does not contain a big-endian integer in the range
-    /// [0, p).
-    pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
-        let value = FieldElement::from_bytes(bytes);
-        CtOption::map(value, Self)
-    }
-
-    /// Returns the SEC-1 encoding of this field element.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.normalize().to_bytes()
-    }
-
-    /// Returns -self, treating it as a value of given magnitude.
-    /// The provided magnitude must be equal or greater than the actual magnitude of `self`.
-    pub fn negate(&self, magnitude: u32) -> Self {
-        Self(self.0.negate(magnitude))
-    }
-
-    /// Fully normalizes the field element.
-    /// Brings the magnitude to 1 and modulo reduces the value.
-    pub fn normalize(&self) -> Self {
-        Self(self.0.normalize())
-    }
-
-    /// Weakly normalizes the field element.
-    /// Brings the magnitude to 1, but does not guarantee the value to be less than the modulus.
-    pub fn normalize_weak(&self) -> Self {
-        Self(self.0.normalize_weak())
-    }
-
-    /// Checks if the field element becomes zero if normalized.
-    pub fn normalizes_to_zero(&self) -> Choice {
-        self.0.normalizes_to_zero()
-    }
-
-    /// Multiplies by a single-limb integer.
-    /// Multiplies the magnitude by the same value.
-    pub fn mul_single(&self, rhs: u32) -> Self {
-        Self(self.0.mul_single(rhs))
-    }
-
-    /// Returns 2*self.
+    /// Returns 2*self
     /// Doubles the magnitude.
     pub fn double(&self) -> Self {
-        Self(self.0.add(&(self.0)))
-    }
-
-    /// Returns self * rhs mod p
-    /// Brings the magnitude to 1 (but doesn't normalize the result).
-    /// The magnitudes of arguments should be <= 8.
-    pub fn mul(&self, rhs: &Self) -> Self {
-        Self(self.0.mul(&(rhs.0)))
+        self + self
     }
 
     /// Returns self * self
     /// Brings the magnitude to 1 (but doesn't normalize the result).
-    /// The magnitudes of arguments should be <= 8.
+    /// The magnitude should be <= 8.
     pub fn square(&self) -> Self {
-        Self(self.0.square())
+        self * self
     }
 
     /// Raises the scalar to the power `2^k`
@@ -169,28 +67,28 @@ impl FieldElement {
         // { 1, 2, 22, 223 }. Use an addition chain to calculate 2^n - 1 for each block:
         // [1], [2], 3, 6, 9, 11, [22], 44, 88, 176, 220, [223]
 
-        let x2 = self.pow2k(1).mul(self);
-        let x3 = x2.pow2k(1).mul(self);
-        let x6 = x3.pow2k(3).mul(&x3);
-        let x9 = x6.pow2k(3).mul(&x3);
-        let x11 = x9.pow2k(2).mul(&x2);
-        let x22 = x11.pow2k(11).mul(&x11);
-        let x44 = x22.pow2k(22).mul(&x22);
-        let x88 = x44.pow2k(44).mul(&x44);
-        let x176 = x88.pow2k(88).mul(&x88);
-        let x220 = x176.pow2k(44).mul(&x44);
-        let x223 = x220.pow2k(3).mul(&x3);
+        let x2 = &self.pow2k(1) * self;
+        let x3 = &x2.pow2k(1) * self;
+        let x6 = &x3.pow2k(3) * &x3;
+        let x9 = &x6.pow2k(3) * &x3;
+        let x11 = &x9.pow2k(2) * &x2;
+        let x22 = &x11.pow2k(11) * &x11;
+        let x44 = &x22.pow2k(22) * &x22;
+        let x88 = &x44.pow2k(44) * &x44;
+        let x176 = &x88.pow2k(88) * &x88;
+        let x220 = &x176.pow2k(44) * &x44;
+        let x223 = &x220.pow2k(3) * &x3;
 
         // The final result is then assembled using a sliding window over the blocks.
-        let res = x223
-            .pow2k(23)
-            .mul(&x22)
-            .pow2k(5)
-            .mul(self)
-            .pow2k(3)
-            .mul(&x2)
-            .pow2k(2)
-            .mul(self);
+        let res = &(&(&(&x223.pow2k(23) * &x22).pow2k(5) * self).pow2k(3) * &x2).pow2k(2) * self;
+        //.pow2k(23)
+        //.mul(&x22)
+        //.pow2k(5)
+        //.mul(self)
+        //.pow2k(3)
+        //.mul(&x2)
+        //.pow2k(2)
+        //.mul(self);
 
         CtOption::new(res, !self.normalizes_to_zero())
     }
@@ -213,22 +111,21 @@ impl FieldElement {
         // { 2, 22, 223 }. Use an addition chain to calculate 2^n - 1 for each block:
         // 1, [2], 3, 6, 9, 11, [22], 44, 88, 176, 220, [223]
 
-        let x2 = self.pow2k(1).mul(&self);
-        let x3 = x2.pow2k(1).mul(&self);
-        let x6 = x3.pow2k(3).mul(&x3);
-        let x9 = x6.pow2k(3).mul(&x3);
-        let x11 = x9.pow2k(2).mul(&x2);
-        let x22 = x11.pow2k(11).mul(&x11);
-        let x44 = x22.pow2k(22).mul(&x22);
-        let x88 = x44.pow2k(44).mul(&x44);
-        let x176 = x88.pow2k(88).mul(&x88);
-        let x220 = x176.pow2k(44).mul(&x44);
-        let x223 = x220.pow2k(3).mul(&x3);
+        let x2 = &self.pow2k(1) * self;
+        let x3 = &x2.pow2k(1) * self;
+        let x6 = &x3.pow2k(3) * &x3;
+        let x9 = &x6.pow2k(3) * &x3;
+        let x11 = &x9.pow2k(2) * &x2;
+        let x22 = &x11.pow2k(11) * &x11;
+        let x44 = &x22.pow2k(22) * &x22;
+        let x88 = &x44.pow2k(44) * &x44;
+        let x176 = &x88.pow2k(88) * &x88;
+        let x220 = &x176.pow2k(44) * &x44;
+        let x223 = &x220.pow2k(3) * &x3;
 
         // The final result is then assembled using a sliding window over the blocks.
-        let res = x223.pow2k(23).mul(&x22).pow2k(6).mul(&x2).pow2k(2);
-
-        let is_root = (res.mul(&res).negate(1) + self).normalizes_to_zero();
+        let res = (&(&x223.pow2k(23) * &x22).pow2k(6) * &x2).pow2k(2);
+        let is_root = (&res.square().negate(1) + &self).normalizes_to_zero();
 
         // Only return Some if it's the square root.
         CtOption::new(res, is_root)
@@ -237,74 +134,6 @@ impl FieldElement {
     #[cfg(test)]
     pub fn modulus_as_biguint() -> BigUint {
         Self::one().negate(1).to_biguint().unwrap() + 1.to_biguint().unwrap()
-    }
-}
-
-impl PartialEq for FieldElement {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.ct_eq(&(other.0)).into()
-    }
-}
-
-impl Default for FieldElement {
-    fn default() -> Self {
-        Self::zero()
-    }
-}
-
-impl ConditionallySelectable for FieldElement {
-    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
-        Self(FieldElement::conditional_select(&(a.0), &(b.0), choice))
-    }
-}
-
-impl ConstantTimeEq for FieldElement {
-    fn ct_eq(&self, other: &Self) -> Choice {
-        self.0.ct_eq(&(other.0))
-    }
-}
-
-impl Add<&FieldElement> for &FieldElement {
-    type Output = FieldElement;
-
-    fn add(self, other: &FieldElement) -> FieldElement {
-        FieldElement(self.0.add(&(other.0)))
-    }
-}
-
-impl Add<&FieldElement> for FieldElement {
-    type Output = FieldElement;
-
-    fn add(self, other: &FieldElement) -> FieldElement {
-        FieldElement(self.0.add(&(other.0)))
-    }
-}
-
-impl AddAssign<FieldElement> for FieldElement {
-    fn add_assign(&mut self, rhs: FieldElement) {
-        *self = *self + &rhs;
-    }
-}
-
-impl Mul<&FieldElement> for &FieldElement {
-    type Output = FieldElement;
-
-    fn mul(self, other: &FieldElement) -> FieldElement {
-        FieldElement(self.0.mul(&(other.0)))
-    }
-}
-
-impl Mul<&FieldElement> for FieldElement {
-    type Output = FieldElement;
-
-    fn mul(self, other: &FieldElement) -> FieldElement {
-        FieldElement(self.0.mul(&(other.0)))
-    }
-}
-
-impl MulAssign<FieldElement> for FieldElement {
-    fn mul_assign(&mut self, rhs: FieldElement) {
-        *self = *self * &rhs;
     }
 }
 
@@ -334,14 +163,14 @@ mod tests {
     fn zero_is_additive_identity() {
         let zero = FieldElement::zero();
         let one = FieldElement::one();
-        assert_eq!((zero + &zero).normalize(), zero);
-        assert_eq!((one + &zero).normalize(), one);
+        assert_eq!((&zero + &zero).normalize(), zero);
+        assert_eq!((&one + &zero).normalize(), one);
     }
 
     #[test]
     fn one_is_multiplicative_identity() {
         let one = FieldElement::one();
-        assert_eq!((one * &one).normalize(), one);
+        assert_eq!((&one * &one).normalize(), one);
     }
 
     #[test]
@@ -378,7 +207,7 @@ mod tests {
         let mut r = FieldElement::one();
         for i in 0..DBL_TEST_VECTORS.len() {
             assert_eq!(hex::encode(r.to_bytes()), DBL_TEST_VECTORS[i]);
-            r = (r + &r).normalize();
+            r = (&r + &r).normalize();
         }
     }
 
@@ -394,10 +223,10 @@ mod tests {
     #[test]
     fn repeated_mul() {
         let mut r = FieldElement::one();
-        let two = r + &r;
+        let two = &r + &r;
         for i in 0..DBL_TEST_VECTORS.len() {
             assert_eq!(hex::encode(r.normalize().to_bytes()), DBL_TEST_VECTORS[i]);
-            r = r * &two;
+            r = &r * &two;
         }
     }
 
@@ -405,7 +234,7 @@ mod tests {
     fn negation() {
         let two = FieldElement::one().double();
         let neg_two = two.negate(2);
-        assert_eq!((two + &neg_two).normalize(), FieldElement::zero());
+        assert_eq!((&two + &neg_two).normalize(), FieldElement::zero());
         assert_eq!(neg_two.negate(3).normalize(), two.normalize());
     }
 
@@ -416,16 +245,16 @@ mod tests {
         let one = FieldElement::one();
         assert_eq!(one.invert().unwrap().normalize(), one);
 
-        let two = one + &one;
+        let two = &one + &one;
         let inv_two = two.invert().unwrap();
-        assert_eq!((two * &inv_two).normalize(), one);
+        assert_eq!((&two * &inv_two).normalize(), one);
     }
 
     #[test]
     fn sqrt() {
         let one = FieldElement::one();
-        let two = one + &one;
-        let four = two.square();
+        let two = &one + &one;
+        let four = &two.square();
         assert_eq!(four.sqrt().unwrap().normalize(), two.normalize());
     }
 

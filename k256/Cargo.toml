@@ -24,17 +24,16 @@ num-bigint = "0.3"
 num-traits = "0.2"
 
 [features]
-default = ["arithmetic", "std"]
-u64_backend = []
-u32_backend = []
-field-montgomery = []
-force-32-bit = []
+default = ["arithmetic", "u64_backend", "std"]
 rand = ["elliptic-curve/rand_core"]
 sha256 = ["ecdsa/digest", "ecdsa/hazmat", "sha2"]
 test-vectors = []
 std = ["elliptic-curve/std"]
 
-arithmetic = ["u64_backend"]
+arithmetic = []
+u64_backend = []
+u32_backend = []
+u64_montgomery = []
 
 [package.metadata.docs.rs]
 all-features = true

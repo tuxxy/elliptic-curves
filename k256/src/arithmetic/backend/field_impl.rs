@@ -4,17 +4,15 @@
 
 use elliptic_curve::subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
-//cfg_if! {
-//    if #[cfg(any(target_pointer_width = "32", feature = "force-32-bit"))] {
-//        use super::field_10x26::FieldElement10x26 as FieldElementUnsafeImpl;
-//    } else if #[cfg(target_pointer_width = "64")] {
-//        use super::field_5x52::FieldElement5x52 as FieldElementUnsafeImpl;
-//    }
-//}
+#[cfg(feature = "u64_backend")]
+use super::u64::field::FieldElement5x52 as FieldElement;
+
+#[cfg(feature = "u32_backend")]
+use super::u32::field::FieldElement10x26 as FieldElement;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FieldElementImpl {
-    value: FieldElementUnsafeImpl,
+    value: FieldElement,
     magnitude: u32,
     normalized: bool,
 }
