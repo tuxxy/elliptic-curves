@@ -50,158 +50,79 @@ impl<'b> MulAssign<&'b FieldElement5x52> for FieldElement5x52 {
 impl<'a, 'b> Mul<&'b FieldElement5x52> for &'a FieldElement5x52 {
     type Output = FieldElement5x52;
     fn mul(self, rhs: &'b FieldElement5x52) -> FieldElement5x52 {
-        let a0 = self.0[0] as u128;
-        let a1 = self.0[1] as u128;
-        let a2 = self.0[2] as u128;
-        let a3 = self.0[3] as u128;
-        let a4 = self.0[4] as u128;
-        let b0 = rhs.0[0] as u128;
-        let b1 = rhs.0[1] as u128;
-        let b2 = rhs.0[2] as u128;
-        let b3 = rhs.0[3] as u128;
-        let b4 = rhs.0[4] as u128;
-        let m = 0xFFFFFFFFFFFFFu128;
-        let r = 0x1000003D10u128;
+        const LOW_52_BIT_MASK: u128 = (1 << 52) - 1;
+        const LOW_48_BIT_MASK: u128  = (1 << 48) - 1;
+        const R: u128 = 0x1000003D10; // R = 2^256 mod p
 
-        debug_assert!(a0 >> 56 == 0);
-        debug_assert!(a1 >> 56 == 0);
-        debug_assert!(a2 >> 56 == 0);
-        debug_assert!(a3 >> 56 == 0);
-        debug_assert!(a4 >> 52 == 0);
+        #[inline(always)]
+        fn m(x: u64, y: u64) -> u128 { (x as u128) * (y as u128) }
 
-        debug_assert!(b0 >> 56 == 0);
-        debug_assert!(b1 >> 56 == 0);
-        debug_assert!(b2 >> 56 == 0);
-        debug_assert!(b3 >> 56 == 0);
-        debug_assert!(b4 >> 52 == 0);
+        let a: &[u64; 5] = &self.0;
+        let b: &[u64; 5] = &rhs.0;
 
-        // [... a b c] is a shorthand for ... + a<<104 + b<<52 + c<<0 mod n.
-        // for 0 <= x <= 4, px is a shorthand for sum(a[i]*b[x-i], i=0..x).
-        // for 4 <= x <= 8, px is a shorthand for sum(a[i]*b[x-i], i=(x-4)..4)
-        // Note that [x 0 0 0 0 0] = [x*r].
+        // Schoolbook multiplication
+        let mut l0: u128 = m(a[0], b[0]);
+        let mut l1: u128 = m(a[0], b[1]) + m(a[1], b[0]);
+        let mut l2: u128 = m(a[0], b[2]) + m(a[1], b[1]) + m(a[2], b[0]);
+        let mut l3: u128 = m(a[0], b[3]) + m(a[1], b[2]) + m(a[2], b[1]) + m(a[3], b[0]);
+        let mut mid: u128 = m(a[0], b[4]) + m(a[1], b[3]) + m(a[2], b[2]) + m(a[3], b[1]) + m(a[4], b[0]);
+        let mut h0: u128 = m(a[1], b[4]) + m(a[2], b[3]) + m(a[3], b[2]) + m(a[4], b[1]);
+        let mut h1: u128 = m(a[2], b[4]) + m(a[3], b[3]) + m(a[4], b[2]);
+        let mut h2: u128 = m(a[3], b[4]) + m(a[4], b[3]);
+        let mut h3: u128 = m(a[4], b[4]);
 
-        let mut c: u128;
-        let mut d: u128;
+        let test: u128 = l3 + ((h3 & LOW_52_BIT_MASK) * R);
+        // Begin the reduction
+        //
+        // The idea is we multiply the high bits with R and add it to the low bits.
+        // Then we set the carries for each to use in the preceeding calculation.
 
-        d = a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0;
-        debug_assert!(d >> 114 == 0);
-        // [d 0 0 0] = [p3 0 0 0]
-        c = a4 * b4;
-        debug_assert!(c >> 112 == 0);
-        // [c 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
-        d += (c & m) * r;
-        c >>= 52;
-        debug_assert!(d >> 115 == 0);
-        debug_assert!(c >> 60 == 0);
-        let c64 = c as u64;
-        // [c 0 0 0 0 0 d 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
-        let t3 = (d & m) as u64;
-        d >>= 52;
-        debug_assert!(t3 >> 52 == 0);
-        debug_assert!(d >> 63 == 0);
-        let d64 = d as u64;
-        // [c 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 0 p3 0 0 0]
+        let mut out = [0u64; 5];
 
-        d = d64 as u128 + a0 * b4 + a1 * b3 + a2 * b2 + a3 * b1 + a4 * b0;
-        debug_assert!(d >> 115 == 0);
-        // [c 0 0 0 0 d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
-        d += c64 as u128 * r;
-        debug_assert!(d >> 116 == 0);
-        // [d t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
-        let t4 = (d & m) as u64;
-        d >>= 52;
-        debug_assert!(t4 >> 52 == 0);
-        debug_assert!(d >> 64 == 0);
-        let d64 = d as u64;
-        // [d t4 t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
-        let tx = t4 >> 48;
-        let t4 = t4 & ((m as u64) >> 4);
-        debug_assert!(tx >> 4 == 0);
-        debug_assert!(t4 >> 48 == 0);
-        // [d t4+(tx<<48) t3 0 0 0] = [p8 0 0 0 p4 p3 0 0 0]
+        // c*2^156
+        l3 += (h3 & LOW_52_BIT_MASK) * R;
+        out[3] = (l3 & LOW_52_BIT_MASK) as u64;
+        h3 >>= 52;
+        l3 >>= 52;
 
-        c = a0 * b0;
-        debug_assert!(c >> 112 == 0);
-        // [d t4+(tx<<48) t3 0 0 c] = [p8 0 0 0 p4 p3 0 0 p0]
-        d = d64 as u128 + a1 * b4 + a2 * b3 + a3 * b2 + a4 * b1;
-        debug_assert!(d >> 115 == 0);
-        // [d t4+(tx<<48) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
-        let u0 = (d & m) as u64;
-        d >>= 52;
-        debug_assert!(u0 >> 52 == 0);
-        debug_assert!(d >> 63 == 0);
-        let d64 = d as u64;
-        // [d u0 t4+(tx<<48) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
-        // [d 0 t4+(tx<<48)+(u0<<52) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
-        let u0 = (u0 << 4) | tx;
-        debug_assert!(u0 >> 56 == 0);
-        // [d 0 t4+(u0<<48) t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
-        c += u0 as u128 * ((r as u64) >> 4) as u128;
-        debug_assert!(c >> 115 == 0);
-        // [d 0 t4 t3 0 0 c] = [p8 0 0 p5 p4 p3 0 0 p0]
-        let r0 = (c & m) as u64;
-        c >>= 52;
-        debug_assert!(r0 >> 52 == 0);
-        debug_assert!(c >> 61 == 0);
-        let c64 = c as u64;
-        // [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 0 p0]
+        println!("t, l, h, R = {},{},{},{}", test, l3, h3, R); 
 
-        c = c64 as u128 + a0 * b1 + a1 * b0;
-        debug_assert!(c >> 114 == 0);
-        // [d 0 t4 t3 0 c r0] = [p8 0 0 p5 p4 p3 0 p1 p0]
-        d = d64 as u128 + a2 * b4 + a3 * b3 + a4 * b2;
-        debug_assert!(d >> 114 == 0);
-        // [d 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
-        c += (d & m) * r;
-        d >>= 52;
-        debug_assert!(c >> 115 == 0);
-        debug_assert!(d >> 62 == 0);
-        let d64 = d as u64;
-        // [d 0 0 t4 t3 0 c r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
-        let r1 = (c & m) as u64;
-        c >>= 52;
-        debug_assert!(r1 >> 52 == 0);
-        debug_assert!(c >> 63 == 0);
-        let c64 = c as u64;
-        // [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 0 p1 p0]
+        // c*2^208
+        mid += ((l3 as u64) as u128) + (((h3 as u64) as u128) * R);
+        out[4] = ((mid & LOW_52_BIT_MASK) & LOW_48_BIT_MASK) as u64;
+        let carry: u128 = (mid & LOW_52_BIT_MASK) >> 48;
+        mid >>= 52;
 
-        c = c64 as u128 + a0 * b2 + a1 * b1 + a2 * b0;
-        debug_assert!(c >> 114 == 0);
-        // [d 0 0 t4 t3 c r1 r0] = [p8 0 p6 p5 p4 p3 p2 p1 p0]
-        d = d64 as u128 + a3 * b4 + a4 * b3;
-        debug_assert!(d >> 114 == 0);
-        // [d 0 0 t4 t3 c t1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        c += (d & m) * r;
-        d >>= 52;
-        debug_assert!(c >> 115 == 0);
-        debug_assert!(d >> 62 == 0);
-        let d64 = d as u64;
-        // [d 0 0 0 t4 t3 c r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+        // c*2^0
+        h0 += ((mid as u64) as u128);
+        l0 += (((((h0 & LOW_52_BIT_MASK) << 4) | carry) as u64) as u128) * (((R as u64) >> 4) as u128);
+        out[0] = (l0 & LOW_52_BIT_MASK) as u64;
+        h0 >>= 52;
+        l0 >>= 52;
 
-        // [d 0 0 0 t4 t3 c r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        let r2 = (c & m) as u64;
-        c >>= 52;
-        debug_assert!(r2 >> 52 == 0);
-        debug_assert!(c >> 63 == 0);
-        let c64 = c as u64;
-        // [d 0 0 0 t4 t3+c r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        c = c64 as u128 + (d64 as u128) * r + t3 as u128;
-        debug_assert!(c >> 100 == 0);
-        // [t4 c r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        let r3 = (c & m) as u64;
-        c >>= 52;
-        debug_assert!(r3 >> 52 == 0);
-        debug_assert!(c >> 48 == 0);
-        let c64 = c as u64;
-        // [t4+c r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        c = c64 as u128 + t4 as u128;
-        debug_assert!(c >> 49 == 0);
-        // [c r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
-        let r4 = c as u64;
-        debug_assert!(r4 >> 49 == 0);
-        // [r4 r3 r2 r1 r0] = [p8 p7 p6 p5 p4 p3 p2 p1 p0]
+        // c*2^52
+        h1 += ((h0 as u64) as u128);
+        l1 += (((l0 as u64) as u128)) + ((h1 & LOW_52_BIT_MASK) * R);
+        out[1] = (l1 & LOW_52_BIT_MASK) as u64;
+        h1 >>= 52;
+        l1 >>= 52;
 
-        FieldElement5x52([r0, r1, r2, r3, r4])
+        // c*2^104
+        h2 += ((h1 as u64) as u128);
+        l2 += ((l1 as u64) as u128) + ((h2 & LOW_52_BIT_MASK) * R);
+        out[2] = (l2 & LOW_52_BIT_MASK) as u64;
+        h2 >>= 52;
+        l2 >>= 52;
+
+        // c*2^156
+        l3 = ((l2 as u64) as u128) + (((h2 as u64) as u128) * R) + out[3] as u128;
+        out[3] = (l3 & LOW_52_BIT_MASK) as u64;
+        l3 >>= 52;
+
+        // c*2^208
+        out[4] = (((l3 as u64) as u128) + out[4] as u128) as u64;
+
+        FieldElement5x52(out)
     }
 }
 
@@ -479,11 +400,10 @@ impl ConditionallySelectable for FieldElement5x52 {
 
 impl ConstantTimeEq for FieldElement5x52 {
     fn ct_eq(&self, other: &Self) -> Choice {
-        //self.0[0].ct_eq(&other.0[0])
-        //    & self.0[1].ct_eq(&other.0[1])
-        //    & self.0[2].ct_eq(&other.0[2])
-        //    & self.0[3].ct_eq(&other.0[3])
-        //    & self.0[4].ct_eq(&other.0[4])
-        self.to_bytes().ct_eq(&other.to_bytes())
+        self.0[0].ct_eq(&other.0[0])
+            & self.0[1].ct_eq(&other.0[1])
+            & self.0[2].ct_eq(&other.0[2])
+            & self.0[3].ct_eq(&other.0[3])
+            & self.0[4].ct_eq(&other.0[4])
     }
 }

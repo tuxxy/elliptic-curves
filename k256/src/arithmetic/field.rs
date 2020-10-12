@@ -143,6 +143,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::FieldElement;
+    use super::FieldElement5x52;
     use crate::arithmetic::util::{biguint_to_bytes, bytes_to_biguint};
     use crate::test_vectors::field::DBL_TEST_VECTORS;
 
@@ -350,5 +351,13 @@ mod tests {
             let m = FieldElement::modulus_as_biguint();
             assert_eq!((&inv_bi * &a_bi) % &m, 1.to_biguint().unwrap());
         }
+    }
+
+    #[test]
+    fn test_blah() {
+        let a = FieldElement5x52([0xFFFFFFFFu64, 1, 0, 0, 0]);
+        let b = FieldElement5x52([1u64, 0, 0, 0, 0]);
+
+        println!("{:?}", (&a * &b).0);
     }
 }
