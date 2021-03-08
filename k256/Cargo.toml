@@ -28,7 +28,7 @@ criterion = "0.3"
 ecdsa-core = { version = "0.8.2", package = "ecdsa", default-features = false, features = ["dev"] }
 hex = "0.4" # TODO: switch to hex-literal
 hex-literal = "0.2"
-num-bigint = "0.3"
+num-bigint = "0.4"
 num-traits = "0.2"
 proptest = "0.10"
 rand_core = { version = "0.5", features = ["getrandom"] }
